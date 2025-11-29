@@ -3,11 +3,9 @@ import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockCont
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js'; // FIX: Re-added this import
 import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'; // Ensure OutputPass is also here
 
 import { Sound } from './audio.js';
 import * as Shaders from './shaders.js';
@@ -26,15 +24,6 @@ style.innerHTML = `
     #status-bar { display: flex; justify-content: center; gap: 20px; margin-bottom: 20px; }
     .status-icon { display: none; color: #fff; font-family: Impact; font-size: 24px; padding: 5px 15px; border-radius: 5px; text-shadow: 0 0 5px #fff; }
     #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; color: white; pointer-events: auto; cursor: pointer; flex-direction: column; z-index: 10; }
-    
-    /* Settings Modal */
-    #settings-modal { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(10, 20, 10, 0.95); border: 2px solid #0f0; padding: 20px; color: #0f0; font-family: 'Consolas', monospace; z-index: 20; width: 350px; box-shadow: 0 0 30px #0f0; }
-    .setting-row { margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
-    .setting-row label { font-weight: bold; }
-    .setting-row input { width: 150px; accent-color: #0f0; }
-    .btn-reset { width: 100%; background: transparent; border: 1px solid #0f0; color: #0f0; padding: 10px; font-family: inherit; font-weight: bold; cursor: pointer; margin-top: 10px; transition: 0.2s; }
-    .btn-reset:hover { background: #0f0; color: #000; }
-
     h1 { font-family: Impact, sans-serif; font-size: 70px; margin: 0; color: #fff; text-shadow: 0 0 20px #0f0; letter-spacing: 8px; font-style: italic; }
     .highscore { color: #ffaa00; font-size: 24px; margin-top: 20px; font-family: 'Courier New', monospace; letter-spacing: 2px; }
 `;
@@ -62,23 +51,11 @@ document.querySelector('#app').innerHTML = `
             <div class="hud-text">SYS: <span id="weapon">BLASTER</span></div>
         </div>
     </div>
-    
-    <div id="settings-modal">
-        <h2 style="margin-top: 0; text-align: center; text-decoration: underline;">VISUAL SYSTEMS</h2>
-        <div class="setting-row"><label>Exposure</label><input type="range" id="set-exposure" min="0.1" max="3.0" step="0.1" value="1.2"></div>
-        <div class="setting-row"><label>Fog Density</label><input type="range" id="set-fog" min="0.0" max="0.1" step="0.001" value="0.01"></div>
-        <div class="setting-row"><label>Bloom Str</label><input type="range" id="set-bloom-str" min="0.0" max="3.0" step="0.1" value="0.8"></div>
-        <div class="setting-row"><label>Bloom Thresh</label><input type="range" id="set-bloom-thresh" min="0.0" max="1.0" step="0.05" value="0.15"></div>
-        <div class="setting-row"><label>Bloom Rad</label><input type="range" id="set-bloom-rad" min="0.0" max="2.0" step="0.1" value="0.5"></div>
-        <button id="btn-reset" class="btn-reset">RESET DEFAULTS</button>
-        <div style="text-align: center; margin-top: 10px; font-size: 12px; color: #fff;">PRESS 'DEL' TO CLOSE</div>
-    </div>
-
     <div id="overlay">
         <h1 id="title-text">NEON MAZE</h1>
         <p id="sub-text" style="font-size: 20px; margin-top: 10px; color: #0f0; text-shadow: 0 0 5px #0f0;">CLICK TO DEPLOY</p>
         <div class="highscore">BEST RUN: LEVEL <span id="best-score">1</span></div>
-        <p style="color:#888; font-size: 14px; margin-top: 30px;">WASD Move | 1-5 Weapons | Scroll to Swap | DEL Settings</p>
+        <p style="color:#888; font-size: 14px; margin-top: 30px;">WASD Move | 1-5 Weapons | Scroll to Swap</p>
     </div>
 `;
 
@@ -87,7 +64,7 @@ let MAP_SIZE = 32;
 const CELL_SIZE = 12;
 const SPEED = 50.0; 
 
-let camera, scene, renderer, controls, composer, bloomPass;
+let camera, scene, renderer, controls, composer;
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
 let prevTime = performance.now();
 let gunGroup, muzzleLight;
@@ -95,8 +72,8 @@ let bossActive = false;
 
 // ASSETS STATE
 let loadedModels = { enemy: null, enemyAnims: [] };
-let mixers = []; 
-let texLoader;
+let mixers = []; // Animation mixers
+let minimapCtx; // Cache for minimap context
 
 let currentLevel = 1;
 let bestLevel = parseInt(localStorage.getItem('retroMazeBest') || '1');
@@ -128,17 +105,15 @@ const player = {
     powerups: { quad: 0, haste: 0, invul: 0 }
 };
 
-// --- ASSET GENERATORS ---
+// --- ASSET GENERATORS (PROCEDURAL) ---
 function createNoiseTexture(colorHex) {
-    const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512;
-    const ctx = canvas.getContext('2d'); ctx.fillStyle = colorHex; ctx.fillRect(0,0,512,512);
-    for(let i=0; i<20000; i++) {
-        const val = Math.random();
-        ctx.fillStyle = val > 0.5 ? `rgba(255,255,255,0.05)` : `rgba(0,0,0,0.1)`;
-        ctx.fillRect(Math.random()*512, Math.random()*512, 2, 2);
+    const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 256;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = colorHex; ctx.fillRect(0,0,256,256);
+    for(let i=0; i<10000; i++) {
+        ctx.fillStyle = Math.random()>0.5 ? `rgba(255,255,255,0.05)` : `rgba(0,0,0,0.1)`;
+        ctx.fillRect(Math.random()*256, Math.random()*256, 2, 2);
     }
-    ctx.strokeStyle = "rgba(0,0,0,0.2)"; ctx.lineWidth = 4; 
-    ctx.strokeRect(0,0,512,512); ctx.strokeRect(20,20,472,472);
+    ctx.strokeStyle = "rgba(0,0,0,0.2)"; ctx.lineWidth = 2; ctx.strokeRect(10,10,236,236); ctx.strokeRect(50,50,156,156);
     const tex = new THREE.CanvasTexture(canvas); tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
     return tex;
 }
@@ -148,52 +123,49 @@ function createDecalTexture() {
     const ctx = canvas.getContext('2d');
     const grad = ctx.createRadialGradient(32,32,0, 32,32,32);
     grad.addColorStop(0, "rgba(0,0,0,0.9)");
-    grad.addColorStop(0.5, "rgba(20,20,20,0.6)");
+    grad.addColorStop(0.3, "rgba(20,20,20,0.8)");
+    grad.addColorStop(0.6, "rgba(50,50,50,0.4)");
     grad.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = grad; ctx.fillRect(0,0,64,64);
     return new THREE.CanvasTexture(canvas);
 }
 
-function loadTextureMaterial(pathBase, colorHex, roughness) {
-    const mat = new THREE.MeshStandardMaterial({ 
-        color: colorHex, roughness: roughness, metalness: 0.5, bumpScale: 0.1
-    });
-    const noise = createNoiseTexture(colorHex);
-    mat.map = noise; mat.bumpMap = noise;
-    texLoader.load(`/textures/${pathBase}_diffuse.jpg`, (tex) => { tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping; mat.map = tex; mat.color.setHex(0xffffff); mat.needsUpdate = true; });
-    texLoader.load(`/textures/${pathBase}_normal.jpg`, (tex) => { tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping; mat.normalMap = tex; mat.needsUpdate = true; });
-    texLoader.load(`/textures/${pathBase}_roughness.jpg`, (tex) => { tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping; mat.roughnessMap = tex; mat.needsUpdate = true; });
-    return mat;
-}
-
+const wallTex = createNoiseTexture('#444455');
+const floorTex = createNoiseTexture('#111111');
 const decalTex = createDecalTexture();
-let wallMat, floorMat;
+
+const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, bumpMap: wallTex, bumpScale: 0.5, roughness: 0.2, metalness: 0.6, color: 0x888899 });
+const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, bumpMap: floorTex, bumpScale: 0.2, roughness: 0.8, metalness: 0.2 });
 const decalMatBase = new THREE.MeshBasicMaterial({ map: decalTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
 
 init();
 
 async function init() {
+    // FIX: Cache Minimap Context immediately
+    const mmCanvas = document.getElementById('minimap');
+    if (mmCanvas) {
+        minimapCtx = mmCanvas.getContext('2d');
+        minimapCtx.imageSmoothingEnabled = false;
+    }
+
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x020202);
-    scene.fog = new THREE.FogExp2(0x020202, 0.01);
+    scene.fog = new THREE.FogExp2(0x020202, 0.02);
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.rotation.order = 'YXZ'; 
     camera.position.set(0, 4, 0); 
 
     raycaster = new THREE.Raycaster();
-    texLoader = new THREE.TextureLoader();
 
-    wallMat = loadTextureMaterial('wall', '#444455', 0.2);
-    floorMat = loadTextureMaterial('floor', '#111111', 0.8);
-
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4); 
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); 
     scene.add(ambientLight);
     
     const light = new THREE.SpotLight(0xffffff, 100, 100, 0.8, 0.5, 1);
     light.position.set(0,0,0); light.target.position.set(0,0,-1);
     camera.add(light); camera.add(light.target);
 
+    // Gun
     gunGroup = new THREE.Group();
     const bodyGeo = new THREE.BoxGeometry(0.4, 0.5, 2);
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.2, metalness: 0.8 });
@@ -204,76 +176,39 @@ async function init() {
     muzzleLight = new THREE.PointLight(0xffff00, 0, 15); muzzleLight.position.set(0, 0.25, -1.6); gunGroup.add(muzzleLight);
     gunGroup.position.set(0.4, -0.4, -0.5); camera.add(gunGroup); scene.add(camera);
 
+    // --- ASYNC LOAD ASSETS ---
     console.log("Starting Asset Load...");
-    await loadAssets();
+    await loadAssets(); // Wait for model before making level
     console.log("Assets Ready. Generating Dungeon...");
+    
     generateDungeon();
 
     renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ReinhardToneMapping;
-    renderer.toneMappingExposure = 1.2;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMappingExposure = 1.5;
     document.querySelector('#app').appendChild(renderer.domElement); 
 
     const renderScene = new RenderPass(scene, camera);
-    const ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
-    ssaoPass.kernelRadius = 16; ssaoPass.minDistance = 0.005; ssaoPass.maxDistance = 0.1;
-
-    bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-    bloomPass.threshold = 0.15; bloomPass.strength = 0.8; bloomPass.radius = 0.5;
-    
-    const outputPass = new OutputPass();
-
-    composer = new EffectComposer(renderer); 
-    composer.addPass(renderScene); 
-    composer.addPass(ssaoPass);
-    composer.addPass(bloomPass);
-    composer.addPass(outputPass);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+    bloomPass.threshold = 0.2; bloomPass.strength = 1.0; bloomPass.radius = 0.5;
+    composer = new EffectComposer(renderer); composer.addPass(renderScene); composer.addPass(bloomPass);
 
     controls = new PointerLockControls(camera, document.body);
     const overlay = document.getElementById('overlay');
     overlay.addEventListener('click', () => { 
         if(player.hp <= 0) resetGame();
-        try { Sound.init(); } catch(e) { console.warn("Audio failed to init", e); }
+        
+        try {
+            Sound.init();
+        } catch(e) { console.warn("Audio failed to init", e); }
+        
         controls.lock(); 
     });
     controls.addEventListener('lock', () => overlay.style.display = 'none');
-    controls.addEventListener('unlock', () => { 
-        // Only show overlay if NOT in settings menu
-        const settings = document.getElementById('settings-modal');
-        if(player.hp > 0 && settings.style.display !== 'block') overlay.style.display = 'flex'; 
+    controls.addEventListener('unlock', () => {
+        if(player.hp > 0) overlay.style.display = 'flex';
     });
-
-    // --- SETTINGS EVENT LISTENERS ---
-    document.getElementById('set-exposure').addEventListener('input', (e) => renderer.toneMappingExposure = parseFloat(e.target.value));
-    document.getElementById('set-fog').addEventListener('input', (e) => scene.fog.density = parseFloat(e.target.value));
-    document.getElementById('set-bloom-str').addEventListener('input', (e) => bloomPass.strength = parseFloat(e.target.value));
-    document.getElementById('set-bloom-thresh').addEventListener('input', (e) => bloomPass.threshold = parseFloat(e.target.value));
-    document.getElementById('set-bloom-rad').addEventListener('input', (e) => bloomPass.radius = parseFloat(e.target.value));
-    
-    // RESET BUTTON
-    document.getElementById('btn-reset').addEventListener('click', () => {
-        // Reset values
-        renderer.toneMappingExposure = 1.2; document.getElementById('set-exposure').value = 1.2;
-        bloomPass.strength = 0.8; document.getElementById('set-bloom-str').value = 0.8;
-        bloomPass.threshold = 0.15; document.getElementById('set-bloom-thresh').value = 0.15;
-        bloomPass.radius = 0.5; document.getElementById('set-bloom-rad').value = 0.5;
-        // Reset Fog by re-applying biome
-        applyBiome();
-    });
-
-    const toggleSettings = () => {
-        const modal = document.getElementById('settings-modal');
-        if (modal.style.display === 'none' || modal.style.display === '') {
-            modal.style.display = 'block';
-            document.exitPointerLock();
-        } else {
-            modal.style.display = 'none';
-            controls.lock();
-        }
-    };
 
     document.addEventListener('wheel', (e) => {
         if(!controls.isLocked) return;
@@ -293,7 +228,6 @@ async function init() {
             case 'Digit3': switchWeapon(2); break;
             case 'Digit4': switchWeapon(3); break;
             case 'Digit5': switchWeapon(4); break;
-            case 'Delete': toggleSettings(); break; // SETTINGS KEY
         }
     };
     const onKeyUp = (event) => {
@@ -305,10 +239,7 @@ async function init() {
         }
     };
     document.addEventListener('keydown', onKeyDown); document.addEventListener('keyup', onKeyUp);
-    document.addEventListener('mousedown', () => {
-        // Only fire if settings menu is closed
-        if(document.getElementById('settings-modal').style.display !== 'block') player.trigger = true;
-    });
+    document.addEventListener('mousedown', () => player.trigger = true);
     document.addEventListener('mouseup', () => player.trigger = false);
     window.addEventListener('resize', onWindowResize);
 
@@ -319,14 +250,16 @@ async function init() {
 function loadAssets() {
     return new Promise((resolve) => {
         const loader = new GLTFLoader();
+        console.log("Attempting to load: /models/enemy.glb");
         loader.load('/models/enemy.glb', (gltf) => {
             loadedModels.enemy = gltf.scene;
             loadedModels.enemyAnims = gltf.animations;
-            console.log("SUCCESS: Enemy model loaded.");
+            console.log("SUCCESS: Enemy model loaded with animations:", gltf.animations.length);
             resolve();
         }, undefined, (error) => {
-            console.warn("Verify file exists at public/models/enemy.glb. Using fallback.");
-            resolve(); 
+            console.error("FAILED: Could not load model. Using fallback.", error);
+            console.warn("Verify file exists at public/models/enemy.glb");
+            resolve(); // Resolve anyway to let game start with fallback
         });
     });
 }
@@ -336,10 +269,14 @@ function switchWeapon(idx) {
     const w = WEAPONS[idx];
     document.getElementById('weapon').innerText = w.name;
     document.getElementById('ammo').innerText = w.ammo === -1 ? 'INF' : w.ammo;
+    
+    // Gun color override if Quad
     if(player.powerups.quad > 0) {
-        gunGroup.children[1].material.color.setHex(0x8800ff); muzzleLight.color.setHex(0x8800ff);
+        gunGroup.children[1].material.color.setHex(0x8800ff);
+        muzzleLight.color.setHex(0x8800ff);
     } else {
-        gunGroup.children[1].material.color.setHex(w.color); muzzleLight.color.setHex(w.color);
+        gunGroup.children[1].material.color.setHex(w.color);
+        muzzleLight.color.setHex(w.color);
     }
 }
 
@@ -399,17 +336,12 @@ function nextLevel() {
 
 function applyBiome() {
     let fogColor = 0x020202;
-    // PBR Colors are different than basic material colors
-    let wallColor = 0xffffff; // Use texture color
-    // REDUCED FOG DENSITY SCALING
-    let density = 0.01;
-    if (currentLevel >= 7) { fogColor = 0x220000; density = 0.025; } 
-    else if (currentLevel >= 4) { fogColor = 0x001100; density = 0.02; }
+    let wallColor = 0x888899;
+    let density = 0.02;
+    if (currentLevel >= 7) { fogColor = 0x220000; wallColor = 0x442222; density = 0.04; } 
+    else if (currentLevel >= 4) { fogColor = 0x001100; wallColor = 0x445544; density = 0.035; }
     scene.background.setHex(fogColor); scene.fog.color.setHex(fogColor); scene.fog.density = density;
-    // wallMat is updated by texture, but we can tint it
     wallMat.color.setHex(wallColor);
-    // Update UI Slider
-    document.getElementById('set-fog').value = density;
 }
 
 function generateDungeon() {
@@ -419,6 +351,7 @@ function generateDungeon() {
     barrels.forEach(b => scene.remove(b)); barrels = [];
     enemies.forEach(e => scene.remove(e)); enemies = [];
     decals.forEach(d => scene.remove(d.mesh)); decals = [];
+    // Clear mixers for old enemies (though we usually clear enemies on level gen anyway)
     mixers = []; 
     if(portal) { scene.remove(portal); portal = null; }
 
@@ -426,17 +359,11 @@ function generateDungeon() {
     MAP_SIZE = bossActive ? 40 : Math.min(60, 32 + currentLevel * 2);
 
     const floorGeo = new THREE.PlaneGeometry(MAP_SIZE * CELL_SIZE, MAP_SIZE * CELL_SIZE);
-    // Tiling adjustments for texture
-    if(floorMat.map) floorMat.map.repeat.set(MAP_SIZE, MAP_SIZE);
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2; scene.add(floor); levelMeshes.push(floor);
-    
-    const ceil = new THREE.Mesh(floorGeo, wallMat); // Reuse wall mat for ceil
+    const ceil = new THREE.Mesh(floorGeo, wallMat);
     ceil.rotation.x = Math.PI / 2; ceil.position.y = CELL_SIZE; scene.add(ceil); levelMeshes.push(ceil);
-
-    // Wall with Detail Trim
     const wallGeo = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
-    const trimGeo = new THREE.BoxGeometry(CELL_SIZE, 1, CELL_SIZE + 1);
 
     for(let x=0; x<MAP_SIZE; x++) { mapData[x] = []; for(let z=0; z<MAP_SIZE; z++) mapData[x][z] = 1; }
 
@@ -469,9 +396,11 @@ function generateDungeon() {
                     if(type === 'swarmer') { spawnEnemy(cx+5, cz, 'swarmer'); spawnEnemy(cx-5, cz, 'swarmer'); }
                 }
                 if(Math.random() > 0.5) {
+                    // Powerup chance
                     const r = Math.random();
                     let type = r < 0.3 ? 'health' : (r < 0.6 ? 'ammo' : (r < 0.8 ? 'rocket_ammo' : 'quad'));
-                    if(r > 0.95) type = 'invul'; else if (r > 0.9) type = 'haste';
+                    if(r > 0.95) type = 'invul';
+                    else if (r > 0.9) type = 'haste';
                     spawnPickup(cx + (Math.random()-0.5)*10, cz + (Math.random()-0.5)*10, type);
                 }
                 if(Math.random() > 0.7) spawnBarrel(cx + (Math.random()-0.5)*15, cz + (Math.random()-0.5)*15);
@@ -493,15 +422,8 @@ function generateDungeon() {
                 const wall = new THREE.Mesh(wallGeo, wallMat);
                 wall.position.set((x - MAP_SIZE/2) * CELL_SIZE, CELL_SIZE/2, (z - MAP_SIZE/2) * CELL_SIZE);
                 scene.add(wall); levelMeshes.push(wall);
-                
-                if(!bossActive && Math.random() < 0.3) {
-                    const trim = new THREE.Mesh(trimGeo, new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.8, roughness: 0.1 }));
-                    trim.position.copy(wall.position); 
-                    trim.position.y = (Math.random() > 0.5 ? 0 : CELL_SIZE) - 0.5; 
-                    scene.add(trim); levelMeshes.push(trim);
-                }
-                if(!bossActive && Math.random() < 0.1) {
-                    const stripGeo = new THREE.BoxGeometry(CELL_SIZE+0.1, 0.2, CELL_SIZE+0.1);
+                if(!bossActive && Math.random() < 0.2) {
+                    const stripGeo = new THREE.BoxGeometry(CELL_SIZE+0.1, 0.5, CELL_SIZE+0.1);
                     const stripMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
                     const strip = new THREE.Mesh(stripGeo, stripMat);
                     strip.position.copy(wall.position); strip.position.y = Math.random() * CELL_SIZE; scene.add(strip);
@@ -557,10 +479,12 @@ function spawnBarrel(x, z) {
 function spawnEnemy(x, z, type='drone') {
     const group = new THREE.Group();
     group.userData = { hp: 60, type: type };
+    
     const createShaderMat = (vShader, fShader) => new THREE.ShaderMaterial({ vertexShader: vShader, fragmentShader: fShader, uniforms: Shaders.globalUniforms });
 
     // ASSET CHECK: Only apply to 'drone' for now
     if (type === 'drone' && loadedModels.enemy) {
+        // Clone model with SkeletonUtils to preserve animations
         const model = SkeletonUtils.clone(loadedModels.enemy);
         model.scale.set(2, 2, 2); 
         
@@ -709,7 +633,10 @@ function checkWall(x, z) {
 }
 
 function drawMinimap() {
-    const ctx = document.getElementById('minimap').getContext('2d');
+    // FIX: Add safety check for ctx
+    if (!minimapCtx) return;
+    const ctx = minimapCtx;
+
     const w = 150, h = 150;
     ctx.fillStyle = '#000'; ctx.fillRect(0,0,w,h);
     const cellSize = w / MAP_SIZE;
